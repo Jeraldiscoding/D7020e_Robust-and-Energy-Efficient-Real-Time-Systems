@@ -6,8 +6,8 @@
 #![no_std]
 
 use nrf52840_hal as _;
-use panic_rtt_target as _;
-// use panic_halt as _; // You need to enable `panic-halt` in the Cargo.toml file
+// use panic_rtt_target as _;
+use panic_halt as _; // You need to enable `panic-halt` in the Cargo.toml file
 
 #[rtic::app(device = nrf52840_hal::pac)]
 mod app {
@@ -31,8 +31,8 @@ mod app {
     fn idle(_cx: idle::Context) -> ! {
         rprintln!("idle");
 
-        // panic!("my custom panic message");
-        // #[allow(unreachable_code)]
+        panic!("my custom panic message");
+        #[allow(unreachable_code)]
         #[allow(clippy::empty_loop)]
         loop {}
     }
