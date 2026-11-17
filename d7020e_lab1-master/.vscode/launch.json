@@ -13,6 +13,7 @@
             "preLaunchTask": "cargo build --example",
             "connectUnderReset": false,
             "chip": "nRF52840_xxAA",
+            "allowEraseAll": true,
             "flashingConfig": {
                 "flashingEnabled": true,
                 "haltAfterReset": false,
@@ -41,6 +42,7 @@
             "preLaunchTask": "cargo build --example --release",
             "connectUnderReset": false,
             "chip": "nRF52840_xxAA",
+            "allowEraseAll": true,
             "flashingConfig": {
                 "flashingEnabled": true,
                 "haltAfterReset": false

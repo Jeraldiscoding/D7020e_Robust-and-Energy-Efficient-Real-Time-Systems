@@ -31,11 +31,11 @@ mod app {
         cx.core.DCB.enable_trace();
         cx.core.DWT.enable_cycle_counter();
 
-        // E.1)
-        // let icachecnf = &cx.device.NVMC.icachecnf; // <- un-comment me
-        // code to print the status of the instruction cache enable status
-        // code to enable the instruction code
-        // code to print status after enabling
+        // E.1) Check the instruction cache before and after enabling it.
+        let icachecnf = &cx.device.NVMC.icachecnf;
+        rprintln!("cacheen status: {}", icachecnf.read().cacheen().is_enabled());
+        icachecnf.modify(|_r, w| w.cacheen().enabled());
+        rprintln!("cacheen status: {}", icachecnf.read().cacheen().is_enabled());
 
         rprintln!("start timed_loop");
         let (start, end) = timed_loop();

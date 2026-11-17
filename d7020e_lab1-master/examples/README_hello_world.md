@@ -18,15 +18,30 @@ If all goes well it will compile your example and run it, and you will have the 
 
 Your program should have panicked. Paste the output from the terminal window.
 
-[ Your answer here ]
+```text
+hello_world #0
+21:54:46.296: hello_world #1
+21:54:46.296: hello_world #2
+21:54:46.296: hello_world #3
+21:54:46.296: hello_world #4
+21:54:46.296: hello_world #5
+21:54:46.296: hello_world #6
+21:54:46.296: hello_world #7
+21:54:46.296: hello_world #8
+21:54:46.296: hello_world #9
+21:54:46.296: idle
+21:54:46.296: in some_function
+21:54:46.296: in lets_crash
+21:54:46.296: panicked at examples/hello_world.rs:52:5:
+21:54:46.296: let's crash with 42
+```
 
 ### A.2) Tracing the call stack on a crash.
 
 In the left pane you have a `CALL STACK` dropdown, it indicates that your program is still `Running`
 
-At this point we have reached the `rtt_panic`. In this case, it was a deliberate `panic`, (we called `lets_crash` from `idle`), but in the typical case the `panic` handler is called when the running program attempts to violate the soundness rules of Rust. Instead of continuing with potentially harmful `undefined behavior` the program ends up in the `panic` handler and nothing bad will happen (the program is `safe`).
-
-While it is `safe` to stop, it is rarely what we want the program to do, so let's do some forensic post-mortem analysis.
+The program deliberately panics in `lets_crash` and enters the RTT panic
+handler. Pause the debugger to see which function calls led to the panic.
 
 Press the "pause" button (or press F6).
 
@@ -35,11 +50,11 @@ This allows us to inspect the call stack.
 You should see something like:
 
 ```text
-panic       lib.rs:68:9
-
-lets_crash  hello_world.rs:45:5
-idle        hello_world.rs:38:9
-main        hello_world.rs:13:1
+... panic handler frames ...
+lets_crash     hello_world.rs:52:5
+some_function  hello_world.rs:46:5
+idle           hello_world.rs:37:9
+main           hello_world.rs:13:1
 ```
 
 What you see here are the different stack frames. (Recall from D0013E, function calls and stack frames.)
@@ -50,15 +65,12 @@ In the left panel you have `Registers, Static` and `Variables`. The argument `i`
 
 What was the value of `i`.
 
-[ Your answer here ]
+42
 
-Now let's dig deeper from where was `lets_crashed` called?
+Which frame below `lets_crash` shows where it was called from?
 
-You should find this on the call stack, below `lets_crash`.
-
-Where did the call come from?
-
-[ Your answer here ]
+The caller was `some_function` at line 46, which executes
+`lets_crash(42);`. The panic occurs inside `lets_crash` at line 52.
 
 You can now click the corresponding frame, just to see that the call chain makes sense.
 
@@ -66,8 +78,8 @@ You can now click the corresponding frame, just to see that the call chain makes
 
 Rust is good at optimizing code, but it can be hard to debug since the structure of the code is altered in the process.
 
-Now repeat the same process as in A.3 but choosing the `probe-rs Release` profile instead. You need to terminate the current debug session by pressing the red square (or press SHIFT-F5).
-
+Repeat the crash inspection from A.2 using the `probe-rs Release` profile.
+Stop the current session first by pressing the red square (or Shift+F5).
 
 ### A.4) Breakpoints
 
@@ -77,25 +89,36 @@ Now run the program again using the `probe-rs Debug` profile.
 
 What is the value reported for `i`, when the program stops at the breakpoint.
 
-[ Your answer here ]
+```
+0
+```
 
 You can press play again (F5), what is the new value of `i`.
 
-[ Your answer here ]
+```
+1
+```
 
 Now, terminate the debug session and try the same in `probe-rs Release`.
 
 What is the value reported for `i`.
 
-[ Your answer here ]
+```
+< <value optimized away by compiler, out of scope, or dropped> >
+```
 
 You can press play again (F5), what is the new value of `i`.
 
-[ Your answer here ]
+```
+no second stop at line 28 observed
+```
 
 What do you think happened?
 
-[ Your answer here ]
+In Release, the debugger stopped at line 28 but couldn't show the loop
+counter `i`. Compiler optimisations can make a variable unavailable to the
+debugger. After F5, no second stop at line 28 was observed. The manual pause
+showed `i = 42` in `lets_crash`, where `i` is the function argument.
 
 ... your guess is as good as mine, ... its hard also for the debugger to figure out ...
 

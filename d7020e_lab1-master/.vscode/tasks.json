@@ -5,7 +5,8 @@
     "tasks": [
         {
             "label": "cargo build --example",
-            "command": "cargo",
+            "type": "process",
+            "command": "${env:HOME}/.cargo/bin/cargo",
             "args": [
                 "build",
                 "--example",
@@ -18,8 +19,8 @@
         },
         {
             "label": "cargo build --example --release",
-            "command": "cargo",
-            "args": [
+            "type": "process",
+            "command": "${env:HOME}/.cargo/bin/cargo",            "args": [
                 "build",
                 "--example",
                 "${fileBasenameNoExtension}",

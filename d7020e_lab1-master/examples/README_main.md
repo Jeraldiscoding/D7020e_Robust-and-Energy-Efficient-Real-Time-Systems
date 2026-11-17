@@ -7,9 +7,7 @@ A small warmup example to get you going with RTIC and embedded Rust.
 ## Expected learning outcomes
 
 - Compile and run a simple RTIC application on the target.
-
 - Tracing to terminal.
-
 - Panic handling in Rust RTIC.
 
 ---
@@ -28,7 +26,6 @@ cargo run --example main
   Programming ✔ [00:00:00] [###########################################################] 16.00 KiB/16.00 KiB @ 25.58 KiB/s (eta 0s )    Finished in 1.183s
 ...
 ^C⏎
-
 ```
 
 What is the output?
@@ -114,7 +111,5 @@ The #[panic_handler] attribute makes Rust call this function when a panic occurs
 Once done with this part you should:
 
 - `git add .`, this will add the changed files to git.
-
 - `git commit -m "some text describing the commit"`, commit the changes.
-
 - `git push`, to push the commit upstream (to the Vesuvio gitlab server).

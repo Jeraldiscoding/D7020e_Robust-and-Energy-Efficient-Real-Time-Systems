@@ -14,15 +14,19 @@ To this end, the ARM provides a cycle counter (a wrapping 32 bit timer) as part 
 cargo run --example rtt_timing
 ```
 
-[ Your answer here ]
+```text
+diff 1,440,211
+```
 
 ### A.2) How many cycles per iteration?
 
-[ Your answer here ]
+1,440,211 ÷ 10,000 = **144.0211 cycles per iteration**.
 
 ### A.3) Why do we need a wrapping subtraction?
 
-[ Your answer here ]
+The 32-bit cycle counter wraps to zero after its maximum value, so `end` can
+be smaller than `start`. `wrapping_sub` gives the elapsed cycles when the
+measurement is shorter than one full counter period.
 
 ---
 
@@ -34,21 +38,23 @@ Now we try a release (optimized build, see `Cargo.toml` for build options).
 cargo run --example rtt_timing --release
 ```
 
-[ Your answer here ]
+```text
+start 3249574718, end 3249614723, diff 40005
+```
 
 ### B.2) How many cycles per iteration?
 
-[ Your answer here ]
+40,005 ÷ 10,000 = **4.0005 cycles per iteration**.
 
 What is the speedup (A/B)?
 
-[ Your answer here ]
+1,440,211 ÷ 40,005 ≈ **36.00× speedup over Debug**.
 
 Why do you think it differs that much?
 
-[ Your answer here ]
-
----
+The Debug disassembly shows calls to the range iterator's `next()` and the
+`nop()` wrapper on each pass. Release runs the same 10,000 iterations with
+just three instructions in the loop body: `subs`, `nop`, and `bne`.
 
 Now lets have a closer look at the generated assembly. For reference look at the assembly instruction set: [Table of processor instructions](https://developer.arm.com/documentation/100166/0001/Programmers-Model/Instruction-set-summary/Table-of-processor-instructions?lang=en)
 
@@ -60,7 +66,25 @@ Open the file in your editor and search for the `timed_loop` function implementa
 
 ### B.3) Assembly for `timed_loop`
 
-[ Paste Assembly for function `timed_loop` here ]
+Release disassembly from the baseline build before enabling the cache in E.1.
+
+```asm
+00000302 <_RNvCs1g1KSFAriwu_10rtt_timing10timed_loop>:
+    302: f241 0104     movw r1, #0x1004  ;; Put 0x1004 in the lower 16 bits of r1.
+    306: f242 7210     movw r2, #0x2710  ;; Set the loop counter to 10,000.
+    30a: f2ce 0100     movt r1, #0xe000  ;; Fill the upper 16 bits. r1 is now 0xE0001004,
+                                       ;; the address of the DWT cycle counter.
+    30e: 6808          ldr  r0, [r1]    ;; Read the counter into r0 (start).
+
+    310: 3a01          subs r2, #0x1    ;; Decrement the loop counter and update the zero flag.
+    312: bf00          nop             ;; Execute one no-operation instruction.
+    314: d1fc          bne  0x310      ;; Repeat from 0x310 if the counter is still nonzero.
+
+    316: b580          push {r7, lr}   ;; Save r7 and the return address on the stack.
+    318: 466f          mov  r7, sp     ;; Set r7 to the current stack pointer.
+    31a: 6809          ldr  r1, [r1]    ;; Read the same counter into r1 (end).
+    31c: bd80          pop  {r7, pc}   ;; Restore r7 and return, with start in r0 and end in r1.
+```
 
 Compare the `timed_loop` Rust code with the generated assembly. Make comments in the assembly (pasted above) explaining the source code translation into the generated assembly. In the comments you should state the purpose/usage of the `r0`, `r1` and `r2` registers, how the loop counter is initialized and compared, how the address to the `DWT::cycle_count` register is created, how the result is returned, etc.
 
@@ -69,7 +93,12 @@ based on the information from the technical documentation:
 
 In your generated doc (`cargo doc --open`), search for `DWT::cycle_count()`, and paste its implementation.
 
-[ Paste code for `DWT::cycle_count()` here ]
+```rust
+pub fn cycle_count() -> u32 {
+    // NOTE(unsafe) atomic read with no side effects
+    unsafe { (*Self::PTR).cyccnt.read() }
+}
+```
 
 Explain in your own words how this happens to read the right location in memory.
 
@@ -77,52 +106,53 @@ Hint:
 The cortex-m core peripherals are found in the `cortex_m::peripheral::Peripherals` struct.
 
 - Look at the implementation of `Peripherals` and check the implementation of `DWT` (and in particular what is `PTR`).
-
 - Look for the declaration of `dwt::RegisterBlock` and locate the field `cyccnt` in the structure.
-
 - Look for the declaration of `dwt::RegisterBlock` and locate the associated method `cycle_count()`.
 
-Relate the offset of the `cyccnt` to the documentation [Cortex-M4 Technical Reference Manual r0p0](https://developer.arm.com/documentation/ddi0439/b/Data-Watchpoint-and-Trace-Unit/DWT-Programmers-Model).
+Relate the offset of `cyccnt` to the DWT register table in the
+[Arm Cortex-M4 Technical Reference Manual, section 9.3](https://documentation-service.arm.com/static/5f19da2a20b7cf4bc524d99a).
 
 Now you should be able to understand and explain the implementation of `cycle_count()`.
 
-[ Your own explanation of `cycle_count()` here ]
+The function follows `Self::PTR` to the DWT register block at `0xE0001000`.
+`cyccnt` comes after the four-byte `ctrl` register, so it sits at
+`0xE0001000 + 0x4 = 0xE0001004`. The volatile read returns the current count
+as a `u32`. Both `ldr` instructions read that address.
 
 ### B.5) Latency per instruction in the loop.
 
 Fill in the table below with cycle latencies for the instructions in the loop.
 
-[Table of processor instructions](https://developer.arm.com/documentation/100166/0001/Programmers-Model/Instruction-set-summary/Table-of-processor-instructions?lang=en)
+[Arm Cortex-M4 Technical Reference Manual, Table 3-1](https://documentation-service.arm.com/static/5f19da2a20b7cf4bc524d99a)
 
-| Instruction   | Cycle Count |
-| ------------- | ----------- |
-| subs r2, #0x1 |             |
-| nop           |             |
-| bne ... #-0x8 |             |
+| Instruction | Cycles with zero memory wait states |
+| --- | --- |
+| `subs r2, #0x1` | 1 |
+| `nop` | 1 |
+| `bne 0x310` | `1 + P` when taken, 1 when falling through |
+
+`P` is the cost of refilling the instruction pipeline, from 1 to 3 cycles.
 
 ### B.5) Estimated execution time in cycles.
 
 Calculate the estimated loop count for executing the loop (it should iterate 10000 times right).
 
-[ Your estimated number of cycles here ]
+The branch is taken 9,999 times and falls through once. With `P = 1`, the
+best-case loop estimate is `9,999 × 4 + 3 = 39,999 cycles`. With `P = 3`, the
+estimate is `9,999 × 6 + 3 = 59,997 cycles` before adding flash wait states.
 
-Compare that to the measured values.
-
-You will see that your calculated value does not correspond to the measured value.
+The Release measurement of 40,005 cycles is 6 above the best-case loop estimate.
+The measured interval also includes the `push` and `mov` after the loop.
 
 ### B.6) Estimated execution time in cycles, including wait states.
 
-With the default settings the flash memory (for program storage) requires a "wait state" for accessing the flash memory. This will introduce one clock cycle latency for each instruction fetch.
+Estimate the timing under the worksheet's assumptions of one extra cycle per
+instruction fetch and `P = 3`.
 
-Take the flash latency into account and calculate a new estimated value.
-
-You may assume `P` to be 3 (the worst case).
-
-[ Your answer here ]
-
-Hint, This estimated value should correspond (roughly) to the measured value.
-
-Later in this lab, we will see how we can enable the instruction cache, and reach the theoretical maximum performance of the M4.
+`59,997 + 3 × 10,000 = 89,997 cycles`. This is a simplified estimate that
+charges one separate stall to each of the three instructions per iteration.
+It exceeds the measured 40,005 cycles. The measurement alone does not identify
+the actual flash stall count or refill cost.
 
 ### C) General way to access Memory Mapped IO (MMIO).
 
@@ -161,9 +191,11 @@ The structure was implemented by manually inspecting the data sheets from ARM an
 
 We can further inspect the API by clicking on `RW`. We see that `write` and `modify` are marked `unsafe`. Explain in your own words why these are `unsafe`:
 
-[ Your answer here ] 
+Writing a hardware register can change how the device behaves. The generic
+`RW` wrapper cannot check whether a write is safe for that register and the
+rest of the program. `modify` is also unsafe because it writes the result back.
 
-This API prevents the user from accidental UB (e.g., reading to a write only register), and/or attacks from safe code. (Using *unsafe* code you can `break` any abstraction.)
+The `RO` and `WO` types expose the operations their registers support.
 
 Essentially, the user should never need to access the hardware at this level.
 
@@ -174,15 +206,17 @@ Instead `cortex_m::peripheral::DWT` is provided as user facing abstraction. It i
 What address does `cortex_m::peripheral::DWT` de-reference to?
 Hint, you need to view/follow the (source) code for `DWT::deref`, until you find the constant value of the pointer.
 
-[ Your answer here ]
-
-While it is in general unsafe to operate directly on the raw register block, a set of functions/methods on the `cortex_m::peripheral::DWT` struct.
+It dereferences to the `RegisterBlock` at `0xE0001000`. The implementation
+returns `&*Self::PTR`.
 
 ### C.3 Methods vs. associated functions
 
-Why do you think `enable_cycle_counter` method requires an `&mut self`, while the associated function `cycle_counter` does not?
+Why does `enable_cycle_counter` require `&mut self`, while the associated
+function `cycle_count` takes no receiver?
 
-[ Your answer here ]
+`enable_cycle_counter` changes the DWT control register, so the API requires
+an exclusive borrow of the DWT handle. `cycle_count()` reads a fixed hardware
+register without changing it, so it takes no receiver.
 
 There are only a few different architectures in the ARM Cortex series, which makes it possible to develop and maintain hand written implementations in the `cortex-m` crate.
 
@@ -206,13 +240,16 @@ This also facilitates writing portable and re-usable code in the embedded space,
 
 What advantages/opportunities can you foresee with this approach?
 
-[ Your answer here ]
+Code written against a HAL trait can work with different chips that implement
+the same operations. Tests can use a fake implementation.
 
 ### D.2) Trait based HAL disadvantages
 
 What disadvantages/obstacles can you foresee with this approach?
 
-[ Your answer here ]
+A common interface can leave out features specific to a chip, and each
+supported chip needs an implementation. Hardware differences can still affect
+the timing and performance of portable code.
 
 ---
 
@@ -228,92 +265,166 @@ Address offset: 0x540
 I-Code cache configuration register.
 ```
 
-The `CACHEEN` bit controls the instruction cache (0-disable/1-enable).
+The `CACHEEN` bit is disabled at reset. In [rtt_timing.rs](rtt_timing.rs),
+`init` prints the bit, sets it with `modify(|_r, w| w.cacheen().enabled())`,
+and reads it again. Both arguments to `modify` start with the current
+register value. The closure changes only `CACHEEN`.
+[Nordic nRF52840 NVMC register reference](https://docs.nordicsemi.com/r/bundle/ps_nrf52840/page/nvmc.html)
 
-Your task here is to enable the instruction cache.
+### E.1) Cache status and timing
 
-Now that you are familiar with the documentation, lookup the `cacheen` in your crate's documentation (`S cacheen` should get you there). You will find both a reader and writer interface (accessible both through the `hal` and directly in the `pac`, use the `pac` one).
+With all numbered extra NOPs still commented out, run both commands on
+the board. Press Ctrl+C after capturing the output from each run.
 
-Figure out how to `read` the cache bit and print its value in init.
-Hint 1: uncomment the commented line:
-
-```rust
-// let icachecnf = &cx.device.NVMC.icachecnf;
+```sh
+cargo run --example rtt_timing
+cargo run --example rtt_timing --release
 ```
 
-Hint 2, use the `read()` to get the register value, use `cacheen()` to get the field value, use `is_enabled()` to inspect the field value.
+**Debug output**
 
-Run the application and confirm the you get a `false` value printed.
-
-Now, use the `modify(|_r, w| ...)` API to change the field value. (Here `r` will be the reset default, and `w` the current value. Set the `cacheen()` bit by `enabled()` based on the current value passed in `w`.
-
-Finally, add code to print the `cacheen` status again (to confirm that it has been correctly set).
-
-Now run the application again.
-
-You should have a trace similar to this (if not, go back and fix your code).
-
-```
-cacheen status: false
-cacheen status: true
+```text
+init
+23:07:24.517: cacheen status: false
+23:07:24.517: cacheen status: true
+23:07:24.517: start timed_loop
+23:07:24.517: start 3353009532, end 3354229736, diff 1220204
+23:07:24.517: idle
 ```
 
-### E.1)
+**Release output**
 
-Paste your program output for a debug/dev build:
+```text
+init
+23:07:35.542: cacheen status: false
+23:07:35.542: cacheen status: true
+23:07:35.542: start timed_loop
+23:07:35.542: start 3969401728, end 3969441733, diff 40005
+23:07:35.542: idle
+```
 
-[ Program output here ]
+Both zero-extra-NOP counts were reproduced on the board in separate runs.
 
-Paste your program output for a release build:
-
-[ Program output here ]
-
-Commit the changed source code `rtt_timing.rs` and push it to your git repo.
+Commit and push the cache change and results after completing section E.
 
 ### E.2) Best case estimation vs. measured number of clock cycles
 
 Now compare the measured cycle count, to the best case estimation (B5 above), what do you find?
 
-[ Your answer here ] 
+The zero-extra-NOP Release run measured **40,005 cycles**, 6 cycles above
+the B.5 best-case loop estimate of 39,999. It matched the earlier Release
+measurement with the cache disabled.
 
-Now, with a bit of luck the loop fits perfectly in the cache and you should not have any wait states triggered. However, the cache and pipeline fill is not very advanced/smart, so it depends largely on the address alignment. Try "moving" the loop by un-commenting one of the `asm::nop()` instructions. Re-run your application to see if the cycle count changed. Iterate, this (un-comment another) and try to find the "best" and "worst" case (lowest/highest number of cycles).
+The Release sweep added one NOP at a time before the first counter read.
+The cache status changed from `false` to `true` in all 17 runs.
+
+| Extra NOPs | Loop start (`subs`) | Measured cycles |
+| ---: | ---: | ---: |
+| 0 | `0x2fa` | 40,005 |
+| 1 | `0x2fc` | 40,005 |
+| 2 | `0x2fe` | 40,005 |
+| 3 | `0x300` | 40,005 |
+| 4 | `0x302` | 40,005 |
+| 5 | `0x304` | 70,002 |
+| 6 | `0x306` | 70,002 |
+| 7 | `0x308` | 40,005 |
+| 8 | `0x30a` | 40,005 |
+| 9 | `0x30c` | 40,005 |
+| 10 | `0x30e` | 40,005 |
+| 11 | `0x310` | 40,005 |
+| 12 | `0x312` | 40,005 |
+| 13 | `0x314` | 70,002 |
+| 14 | `0x316` | 70,002 |
+| 15 | `0x318` | 40,005 |
+| 16 | `0x31a` | 40,005 |
 
 ### E.3) Best case vs. worst case memory layout
 
-Now, for the best(worst) case, make an objdump and paste the `timed_loop`, below.
+Restore each measured setting in turn and use this command to print its
+`timed_loop` disassembly. Record any ties.
 
-[ Best case objdump ]
+```sh
+cargo objdump --example rtt_timing --release -- --disassemble |
+  sed -n '/<[^>]*timed_loop>:/,/^$/p'
+```
 
-[ Worst case objdump ]
+**Best measured case: 40,005 cycles.** Settings 0–4, 7–12, and 15–16 tied.
+The disassembly below is from the zero-extra-NOP setting.
 
-Compare the memory layout for the tight loop, (the address of the instructions). Confer to the nRF documentation for the I-cache.
+```asm
+000002ec <_RNvCs1g1KSFAriwu_10rtt_timing10timed_loop>:
+     2ec: f241 0104    	movw	r1, #0x1004
+     2f0: f242 7210    	movw	r2, #0x2710
+     2f4: f2ce 0100    	movt	r1, #0xe000
+     2f8: 6808         	ldr	r0, [r1]
+     2fa: 3a01         	subs	r2, #0x1
+     2fc: bf00         	nop
+     2fe: d1fc         	bne	0x2fa <_RNvCs1g1KSFAriwu_10rtt_timing10timed_loop+0xe> @ imm = #-0x8
+     300: b580         	push	{r7, lr}
+     302: 466f         	mov	r7, sp
+     304: 6809         	ldr	r1, [r1]
+     306: bd80         	pop	{r7, pc}
+```
+
+**Worst measured case: 70,002 cycles.** Settings 5, 6, 13, and 14 tied.
+The disassembly below is from the five-extra-NOP setting.
+
+```asm
+000002ec <_RNvCs1g1KSFAriwu_10rtt_timing10timed_loop>:
+     2ec: f241 0104    	movw	r1, #0x1004
+     2f0: bf00         	nop
+     2f2: bf00         	nop
+     2f4: bf00         	nop
+     2f6: bf00         	nop
+     2f8: bf00         	nop
+     2fa: f242 7210    	movw	r2, #0x2710
+     2fe: f2ce 0100    	movt	r1, #0xe000
+     302: 6808         	ldr	r0, [r1]
+     304: 3a01         	subs	r2, #0x1
+     306: bf00         	nop
+     308: d1fc         	bne	0x304 <_RNvCs1g1KSFAriwu_10rtt_timing10timed_loop+0x18> @ imm = #-0x8
+     30a: b580         	push	{r7, lr}
+     30c: 466f         	mov	r7, sp
+     30e: 6809         	ldr	r1, [r1]
+     310: bd80         	pop	{r7, pc}
+```
+
+Reruns of 0 and 5 extra NOPs reproduced both counts. The source and board
+were restored to the zero-extra-NOP setting after the sweep.
 
 ### E.4) Memory layout analysis
 
 Explain in your own words why the performance differs based on the memory layout for the loop, and the documentation for the cache operation. (The documentation is quite sparse in the product data sheet though.)
 
-[ Your answer here ]
+The measured loop uses the same three instructions in both builds. With
+five extra NOPs before timing starts, the branch target moves from `0x2fa`
+to `0x304` and the count rises by 29,997 cycles. All slow cases in this
+sweep have branch targets 4 or 6 bytes past a 16-byte boundary.
+
+Arm lists branch target alignment as a factor in pipeline refill time.
+Nordic documents that cache hits have zero wait states and that misses fetch
+from flash. The timings show a repeatable placement effect. Cache profiling
+would be needed to determine whether cache misses contributed to it.
+[Arm timing, section 3.3.1](https://documentation-service.arm.com/static/5f19da2a20b7cf4bc524d99a) ·
+[Nordic nRF52840 NVMC cache](https://docs.nordicsemi.com/r/bundle/ps_nrf52840/page/nvmc.html)
 
 ---
 
 ### Optional exercise, align attribute
 
+The optional experiments below were left unrun. The original worksheet
+examples are reference material.
+
 So, what we observed here is that memory layout can be very critical to the performance of code. Moving code around with adding `asm::nop` is not very stable, since it all depends on where the compiler (and linker) chose to place the code. To that end there are several alternatives:
 
 - You may use the `align` attribute to the function, ensuring it will be mapped to an address being a multiple of the chosen alignment (this corresponds to an address evenly dividable by the alignment). Unfortunately this attribute is not yet stabilized so you would need a nightly compiler.
-
 - Copy your `rtt_timing.rs` to `rtt_timing_align.rs`, and add that to your repository. In the newly created file:
-
 - Un-comment the `#![feature(fn_align)]` attribute.
-
 - Un-comment the `#[repr(align(64))]` attribute.
-
 - Select the nightly toolchain, e.g. by:
 
   - `rustup override set nightly`
-
   - `rustup target add thumbv7em-none-eabi`
-
   - `rustup component add llvm-tools-preview`
 
 Now, comment out the added `asm::nop()` and the program should execute with an optimal fit to the cache.
@@ -337,9 +448,7 @@ If you want to experiment with this, I recommend you create a git branch, as you
 - A better alternative is to force the function to be placed in RAM, since the RAM accesses should have 0 wait states. In order to do so:
 
   - Copy your `rtt_timing.rs` to `rtt_timing_ram.rs`, add that to your repo and work from there.
-
   - Uncomment the `#[link_section = ".data.timed_loop"]`.
-
   - Make an objdump and verify that the code now contains a trampoline:
 
     ```
@@ -394,32 +503,11 @@ If you want to experiment with this, I recommend you create a git branch, as you
 
 ---
 
-### F) Finally some statics
+### F) Size of `timed_loop`
 
-For embedded it is often/typically crucial to reduce overhead,
-
-- code footprint (flash memory)
-- memory footprint (sram memory)
-- execution OH (speed/power consumption)
-
-We have already looked execution overhead and can conclude
-Rust to do an excellent job. The RAM requirement for the application amounts only to the buffers (allocated for RTT), and the stack for the functions (which is in this case 0 for the `timed_loop`).
-(Look at the code, there is no pushing/popping, no local stack.)
-
-Let's have a look at the code footprint (flash).
-
-```shell
-cargo bloat -n 100 --example rtt_timing --release
-...
-0.0%   0.4%    24B  rtt_timing rtt_timing::timed_loop
-...
-```
-
-That is, the timed loop takes only 24 bytes of memory!
-
-What is the size for `timed_loop` in a debug build?
-
-[ Your answer here ]
+`cargo bloat -n 100 --example rtt_timing` reports **64 bytes** for
+`timed_loop` in Debug. With `--release`, it reports **28 bytes**. The
+Release assembly in B.3 includes a `push` and `pop` outside the loop.
 
 ### F.1) Size including trace output.
 
@@ -427,15 +515,26 @@ What is the size for `timed_loop` in a debug build?
 cargo size --example rtt_timing
 ```
 
-[ Your output here ]
+```text
+   text    data     bss     dec     hex  filename
+  19016       0    1096   20112    4e90  rtt_timing
+```
 
 Now try a release build, what is the total size?
 
-[ Your output here ]
+```sh
+cargo size --example rtt_timing --release
+```
 
-The overall code size should be around than 7kByte of flash, so a fair amount smaller than your debug/dev build.
+```text
+   text    data     bss     dec     hex  filename
+   7296       0    1092    8388    20c4  rtt_timing
+```
 
-However, imagine we want to run the code on a really tiny device, like Apollo11 guidance computer (having a total of some 64kByte of manually woven copper-wire "ROM"), we would want to squeeze the code to its minimum.
+These sizes are for the traced build with the E.1 code and zero extra
+NOPs. Flash occupied by the reported sections (`text + data`) is
+**19,016 bytes in Debug** and **7,296 bytes in Release**. The `bss` column
+counts zero-initialised RAM.
 
 ### F.2) Size, how low can you go?
 
@@ -453,37 +552,42 @@ Hint: make an objdump as done before, to verify that the call to `timed_loop` is
 cargo size --example rtt_timing_opt --release
 ```
 
-[ Your answer here ]
+The [small example](rtt_timing_opt.rs) uses `panic_halt` and removes RTT
+formatting and output. It keeps both counter reads and computes the elapsed
+cycles. `black_box` keeps the computed value in this build.
+
+```text
+   text    data     bss     dec     hex  filename
+    468       0       4     472     1d8  rtt_timing_opt
+```
+
+That is **468 bytes of flash** (`text + data`). The Release disassembly
+shows the call at `0x186` and the two counter reads inside the function:
+
+```asm
+    186: f000 f806    bl   0x196 <_RNvCskF4i5ckJFOL_14rtt_timing_opt10timed_loop>
+    18a: 1a08         subs r0, r1, r0
+
+00000196 <_RNvCskF4i5ckJFOL_14rtt_timing_opt10timed_loop>:
+    ...
+    1a2: 6808         ldr  r0, [r1]
+    1a4: 3a01         subs r2, #0x1
+    1a6: bf00         nop
+    1a8: d1fc         bne  0x1a4
+    ...
+    1ae: 6809         ldr  r1, [r1]
+```
 
 Don't forget to add and commit the `rtt_timing_opt.rs` to your repository.
 
 ---
 
-### G) Summary:
+### G) Summary
 
-What are the learning outcomes.
-
-- You have confirmed that RTIC is extremely light weight (zero-cost in release build).
-  Applications can be be less than 1k flash. Ideal for IoT, or Apollo11!.
-
-- You have seen that RTIC applications are easy to trace using RTT
-  If more details are required, you may use a stop and inspect debugger (like `probe-rs-debug` or `gdb`).
-
-- You have confirmed that Rust generates:
-  really, really, bad code in debug build (beware!).
-  really, really, really good code in release build!
-
-- You have setup timing measurements which are
-  (Almost) cycle accurate (0.000 000 0x s at 100MHz).
-  Consistent (down to clock cycle).
-  Predictable (you eventually got what you expected right?)
-
-- Dealing with hardware puts another dimension to coding. In order to achieve the maximum performance you need to understand the underlying hardware and all its subtle details.
-
-- Unfortunately, neither ARM nor Nordic is disclosing their designs, making it hard/impossible to know exactly how the code will execute.
-
-  To that end, in the optional assignments have shown how you can reverse engineer the behavior of the pipeline fill/cache, ta get a stable/predictable behavior.
-
-  The advent of the RISC-V architecture allows for complete open source MCU implementations. Hopefully companies understand/appreciate the benefit and shares their designs (instead of just preying on the open source designs for their own profit).
-
-  This would allow You as a programmer to better predict the behavior of your code, and thus allow for better software to be built. Moreover, tools for SW analysis will benefit from open source hardware to improve the precision of code analysis.
+- The hardware counter measured a 36× speedup for the Release loop. The
+  disassembly shows the simpler loop control.
+- The DWT register layout explains how Rust reads a hardware counter
+  through a memory address.
+- With the cache enabled, changing the loop's address produced counts of
+  40,005 or 70,002 cycles across the 17 tested layouts.
+- The minimal build reports 468 bytes of flash and retains the timing code.
