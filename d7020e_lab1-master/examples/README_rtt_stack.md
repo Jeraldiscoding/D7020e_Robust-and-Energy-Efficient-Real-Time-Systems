@@ -41,37 +41,55 @@ Expand the `Registers` view and locate the R13/SP.
 
 What is the current SP value?
 
-[ Paste the SP value here ]
+`0x2003fff0` at the breakpoint in `idle`. The readings in this section
+are from a Release build using the `probe-rs` CLI debugger.
 
 Explain in you own words why this is reasonable. Hint, relating to the content of the `memory.x` file, and the discussion in the first section of this file.
 
-[ Your answer here ]
+RAM starts at `0x20000000` and is 256 KiB long, so the stack starts at
+`0x20040000` and grows down. The breakpoint in `idle` is 16 bytes below
+that starting address.
 
 Now continue to the next breakpoint. Should be in the `outer_fn`.
 
 What is now the current SP value?
 
-[ Paste the SP value here ]
+`0x2003ffe0`.
 
 Explain in your own words why this value is reasonable. Hint, think in terms of local variables. Notice, the complete frame is constructed already when we hit the first line in the function body.
 
-[ Your answer here ]
+`outer_fn` saves four 32-bit registers on entry. That accounts for the
+16-byte drop from `idle`.
 
 Now continue to next breakpoint, should be in the `inner_fn`. 
 
 What is the current value of the SP?
 
-[ Paste the SP value here ]
+`0x2003fed0`.
 
 Argue in your own words why this is reasonable. Hint, look at the size of the local array.
 
-[ Your answer here ]
+`inner_fn` reserves 256 bytes for `[7u8; 0x100]` and saves four registers.
+The stack pointer drops by 272 bytes before reaching the breakpoint.
 
 Rust macros allows you to extend the syntax of the Rust language, in this case by an inline assembly "bkpt #<imm>" instruction. During compilation the macro is expanded, and the argument `1` in `bkpt_nr(1)` is injected *into* the assembly instruction (we are actually generating code "in place" at the call site).
 
 Now, hover the `bkpt_nr!` and press F12 (Go To Definition). (You should end up with the definition of `bkpt_nr` in the `src/lib.rs` file.) 
 
-[ Paste the macro here ]
+```rust
+#[macro_export]
+macro_rules! bkpt_nr {
+    ( $nr:expr ) => {
+        unsafe {
+            core::arch::asm!(
+                "bkpt #{nr}",
+                nr = const $nr,
+                options(nomem, nostack, preserves_flags),
+            );
+        }
+    };
+}
+```
 
 Now, lookup the Rust documentation [Inline Assembly](https://doc.rust-lang.org/reference/inline-assembly.html), and the cortex-m assembly documentation [Table of processor instructions](https://developer.arm.com/documentation/100166/0001/Programmers-Model/Instruction-set-summary/Table-of-processor-instructions?lang=en).
 
@@ -79,19 +97,25 @@ The `options` flags inform the compiler of the side effects the specific operati
 
 Explain in your own words, the reasoning behind `options(nomem, nostack, preserves_flags)`, for this particular operation/instruction.
 
-[ Your explanation here ]
+With the debugger attached, `bkpt` stops the core. `nomem` says the
+instruction has no program memory access, `nostack` says it leaves the
+stack alone, and `preserves_flags` says it leaves the condition flags
+unchanged. [Rust Reference: inline assembly options](https://doc.rust-lang.org/reference/inline-assembly.html#options)
 
 Now comment out line 59.
 
 What error do you get and why do you think this should be an error?
 
-[ Your answer here ]
+The build failed with an unused-variable error for `stack_alloc` at line 58.
+Removing `black_box` leaves the array unused. `#![deny(warnings)]` turns
+that warning into an error.
 
 Let us now comment out line 4 (`#![deny(warnings)]`).
 
 If you hover `stack_alloc` (line 58), what is the warning reported?
 
-[ Your answer here ]
+The compiler warned that `stack_alloc` was unused and suggested renaming
+it to `_stack_alloc`.
 
 Follow the hint/suggestion to get rid of the warning.
 
@@ -99,11 +123,13 @@ Now, re-run the experiment:
 
 What is the value of SP when we hit line 57. 
 
-[ Paste the value of SP here ]
+`0x2003ffd8` at the breakpoint in `inner_fn`.
 
 Now, compare this value to the previous experiment? Explain in your own words, what you think the compiler has done.
 
-[ Your answer here ]
+The stack pointer is 264 bytes higher than in the first run. The Release
+disassembly shows that the unused array's 256-byte allocation disappeared
+and that `inner_fn` saves two fewer registers.
 
 !!! IMPORTANT !!!
 Now, revert the changes made, (uncomment lines 4 and 59, and restore the identifier to `stack_alloc`).
@@ -124,19 +150,53 @@ The program should now run to end (end up looping in `idle`).
 
 Let's look at the output:
 
-[ Paste the terminal output here ]
+```text
+init
+23:21:42.984: idle
+23:21:42.984: idle_sp 2003fff0
+23:21:42.984: outer_fn_sp 2003ffe0
+23:21:42.984: inner_fn_sp 2003fed0
+23:21:42.984: end_sp 2003fec0
+```
 
 The SP values reported should look familiar and be very close to the ones you obtained by the manual instrumentation. (If not, go back and check that changes made earlier were reverted properly.)
 
 Now let's look at the `idle`, `outer_fn` and `inner_fn`. They all use the `read_sp!()` (defined in `src/lib.rs`) to obtain the current value of the stack pointer.
 
-[ Paste the `read_sp` macro definition here ]
+```rust
+#[macro_export]
+macro_rules! read_sp {
+    ( ) => {
+        {
+            #[allow(unused_assignments)]
+            let mut sp_val: u32 = 0;
+
+            unsafe {
+                core::arch::asm!(
+                    "mov {sp_val}, sp",
+                    sp_val = out(reg) sp_val,
+                    options(nomem, nostack)
+                );
+                sp_val
+            }
+        }
+    }
+}
+```
 
 Explain in your own words how this works. Hint, relate to documents referred to above. 
 
+`mov` copies the CPU's current `sp` into a register chosen by the compiler.
+`out(reg)` makes the copied value available to Rust as `sp_val`.
+
 In `idle` we call `find_lowest`, explain in your own words what this function does?
 
-[ Your answer here ]
+`find_lowest` reads stack words starting at the current stack pointer and
+scans down four bytes at a time. It stops at the first `0xcccccccc` word
+and returns the address just above it. That estimates the lowest address
+written so far. In this run, `end_sp` was 16 bytes below `inner_fn_sp`.
+The array initializer (`__aeabi_memset4`) saves four registers below
+the inner frame, which accounts for those 16 bytes.
 
 ### C) Discussion.
 
@@ -154,13 +214,22 @@ The dual stack pointers of Cortex-m processors are exposed through MSP and PSP w
 
 Now, re-run the experiment. Press pause and look the set of registers. You will find three stack pointers, SP, MSP, and PSP.
 
-[ Paste their values here ]
+At the pause in the final `idle` loop, the debugger showed:
+
+```text
+SP  = 0x2003fff0
+MSP = 0x2003fff0
+PSP = 0x00000000
+```
 
 Two of them should hold the same value, while the third should be zero.
 
 Lookup their documentation and summarize in your own words their intended use:
 
-[ Your answer here ]
+`SP` (R13) is the active stack pointer. Handler mode always uses the
+main stack pointer (`MSP`). Thread mode can select `MSP` or the process
+stack pointer (`PSP`). This run was using `MSP`.
+[Cortex-M4 Technical Reference Manual, section 3.8](https://documentation-service.arm.com/static/5f19da2a20b7cf4bc524d99a)
 
 The reason is that RTIC does *NOT* rely on the underlying hardware implementing stack switching. Later in the course you will study opportunities to address the underlying problem in order to establish proven compile-time guarantees.
 
@@ -181,10 +250,14 @@ Clone (or fork/clone) the repo and:
 ```shell
 cargo run --example rtt_stack --release
 ```
-[ Paste the output here ]
+The runner stopped at the breakpoint on line 38. Output excerpt:
 
-It should report a breakpoint (Error: CPU halted unexpectedly.
-) at line 38. 
+```text
+init
+23:21:47.866: idle
+Firmware exited unexpectedly: Breakpoint(Unknown)
+Error: Breakpoint(Unknown)
+```
 
 At this point the debug session is terminated.
 
@@ -199,15 +272,20 @@ Inspect the output, and fill out the below table
 | address    | value      |
 | ---------- | ---------- |
 | 0x2003febc | 0xcccccccc |
-| 0x2003fec0 |            |
-| 0x2003fec4 |            |
-| 0x2003fec8 |            |
+| 0x2003fec0 | 0x2003fed0 |
+| 0x2003fec4 | 0x00000000 |
+| 0x2003fec8 | 0x2003ffd8 |
 
 Now, compare with the output value `end_sp`, you should see a 1-1 to relation.
 
+The dump has the paint value at `0x2003febc` and a changed word at
+`0x2003fec0`. The latter address matches `end_sp` in section B.
+
 Take a look at the host side code `src/main.rs`, and describe in your own words how it works. 
 
-[ Your answer here ]
+The course tool (commit `a14d873`) attaches to the nRF52840 and selects
+core 0. It reads 128 consecutive 32-bit words via the debug probe from
+`0x2003fe00` through `0x2003fffc`, then prints each address and value in hex.
 
 ### E) Some notes on stack frames.
 
@@ -223,7 +301,10 @@ This means, that values may be sparsely located on the stack. To my best underst
 
 With the "stack-paint" approach in mind, explain in your own words how that might affect a "binary-search"-based algorithm? 
 
-[ Your answer here ]
+Alignment and padding can leave painted words between words the program
+has written. Binary search needs one clean boundary between painted and
+changed words. A painted gap inside the used region could send it in the
+wrong direction.
 
 
 ### F) Inlining
@@ -234,11 +315,21 @@ Now, uncomment line 54, and comment out line 55.
 
 Run the example.
 
-[ Paste output here ]
+```text
+init
+23:22:43.057: idle
+23:22:43.057: idle_sp 2003fff0
+23:22:43.057: outer_fn_sp 2003fee0
+23:22:43.057: inner_fn_sp 2003fee0
+23:22:43.057: end_sp 2003fed0
+```
 
 Compare the output to your results from exercise B, and explain in your own words how and why the stack allocation has changed. 
 
-[ Your answer here ]
+The disassembly puts the 256-byte array in `outer_fn`'s frame after
+inlining. Both stack pointer reads happen in that frame and give
+`0x2003fee0`. The separate 16-byte `inner_fn` register save is gone, and
+`end_sp` is 16 bytes higher than in B.
 
 ### G) Optional for higher grades
 

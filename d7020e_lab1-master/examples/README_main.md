@@ -37,7 +37,8 @@ init
 
 Explain in your own words what the program does.
 
-The program prints `init`, then prints `idle` once. The empty `loop {}` keeps running without doing anything. Since the print statement is before the loop, it is not repeated.
+The program prints `init` at startup and `idle` before entering the empty
+loop. Each message appears once.
 
 ### B) Panic tracing
 
@@ -79,7 +80,9 @@ init
 
 Explain in your own words why the output changed.
 
-We switched the panic handler from `panic_rtt_target` to `panic_halt`. The program still reaches the same `panic!` call, but `panic_halt` immediately loops forever without printing panic information. In contrast, `panic_rtt_target` prints the panic location and message through RTT before looping forever. The `init` and `idle` messages still appear because the program prints them before the panic, and ordinary RTT tracing is still enabled.
+`panic_halt` loops forever when the program panics. It omits the panic
+message and location that `panic_rtt_target` sends through RTT. The
+`init` and `idle` messages were already printed when the panic occurred.
 
 ### D) Find the source:
 
@@ -102,7 +105,9 @@ fn panic(_info: &PanicInfo) -> ! {
 
 Look at the source code and explain in your own words what it does.
 
-The #[panic_handler] attribute makes Rust call this function when a panic occurs. It ignores the panic information and enters an empty infinite loop without printing anything. The ! return type means the function never returns
+Rust calls this function on a panic because it has the `#[panic_handler]`
+attribute. The function ignores the panic information and enters an empty
+loop. Its return type `!` means it never returns to the caller.
 
 ---
 
